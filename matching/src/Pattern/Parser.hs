@@ -3,7 +3,7 @@
 module Pattern.Parser where
 
 import           Data.Functor.Foldable      (Fix (..), para)
-import           Data.Map                   (Map, findWithDefault, insert)
+import           Data.Map                   (Map, findWithDefault, insert, assocs)
 import qualified Data.Map                   as Map (empty)
 import           Data.Maybe                 (catMaybes)
 
@@ -14,7 +14,8 @@ import           Kore.AST.Common            (And (..), Application (..),
                                              Forall (..), Iff (..),
                                              Implies (..), In (..), Next (..),
                                              Not (..), Or (..), Pattern (..),
-                                             Rewrites (..), Symbol (..),
+                                             Rewrites (..), Symbol (..), SymbolOrAlias (..),
+                                             Id (..),
                                              Variable)
 import           Kore.AST.Kore              (CommonKorePattern,
                                              UnifiedPattern (..), UnifiedSort,
@@ -27,39 +28,42 @@ import           Kore.AST.Sentence          (Definition (..), KoreDefinition,
                                              SentenceAxiom (..),
                                              SentenceSymbol (..),
                                              UnifiedSentence,
+                                             Attributes (..),
                                              applyUnifiedSentence)
 import           Kore.Parser.Parser         (fromKore)
 
 --[ Metadata ]--
 
 data SymLib = SymLib
-  { symCs :: Map (Unified Symbol) ([UnifiedSort], UnifiedSort)
+  { symCs :: Map (Unified Symbol) ([UnifiedSort], UnifiedSort, Attributes)
   , symSt :: Map UnifiedSort [(Unified Symbol)]
   } deriving (Show, Eq)
 
 parseSymbolSentence :: UnifiedSentence UnifiedSortVariable UnifiedPattern Variable
-                    -> Maybe (Unified Symbol, ([UnifiedSort], UnifiedSort))
+                    -> Maybe (Unified Symbol, ([UnifiedSort], UnifiedSort, Attributes))
 parseSymbolSentence = applyUnifiedSentence metaT objectT
   where
     metaT   = \case
       SentenceSymbolSentence s ->
         Just (asUnified $ sentenceSymbolSymbol s,
               (asUnified <$> sentenceSymbolSorts s,
-               asUnified $ sentenceSymbolResultSort s))
+               asUnified $ sentenceSymbolResultSort s,
+         sentenceSymbolAttributes s))
       _ -> Nothing
     objectT = \case
       SentenceSymbolSentence s ->
         Just (asUnified $ sentenceSymbolSymbol s,
               (asUnified <$> sentenceSymbolSorts s,
-               asUnified $ sentenceSymbolResultSort s))
+               asUnified $ sentenceSymbolResultSort s,
+         sentenceSymbolAttributes s))
       _ -> Nothing
 
-mkSymLib :: [(Unified Symbol, ([UnifiedSort], UnifiedSort))]
+mkSymLib :: [(Unified Symbol, ([UnifiedSort], UnifiedSort, Attributes))]
          -> SymLib
 mkSymLib = foldl go (SymLib Map.empty Map.empty)
   where
-    go (SymLib dIx rIx) (symbol, (args, result)) =
-      SymLib { symCs = insert symbol (args, result) dIx
+    go (SymLib dIx rIx) (symbol, (args, result, attrs)) =
+      SymLib { symCs = insert symbol (args, result, attrs) dIx
              , symSt = insert result (symbol : (findWithDefault [] result rIx)) rIx
              }
 
@@ -115,6 +119,17 @@ findRewrites = para (unifiedPatternRAlgebra rAlgebra rAlgebra)
     rAlgebra (OrPattern (Or _ (_, p₀) (_, p₁)))           = p₀ ++ p₁
     rAlgebra _                                            = []
 
+
+-- Return True if this CommonKorePattern represents a function attribute.
+isFunction :: CommonKorePattern
+           -> Bool
+isFunction = para (unifiedPatternRAlgebra rAlgebra rAlgebra)
+  where
+    rAlgebra :: Pattern lvl Variable (CommonKorePattern, Bool)
+             -> Bool
+    rAlgebra (ApplicationPattern (Application (SymbolOrAlias (Id "function" _) _) _)) = True
+    rAlgebra _ = False
+
 parseRewrites :: KoreDefinition -> [Rewrites Object CommonKorePattern]
 parseRewrites koreDefinition =
   let modules   = definitionModules koreDefinition
@@ -128,3 +143,20 @@ parseDefinition fileName = do
   case result of
     Left err         -> error err
     Right definition -> return definition
+
+-- Return the function symbol and whether or not the symbol is actually a function.
+getPossibleFunction :: (Unified Symbol, ([UnifiedSort], UnifiedSort, Attributes)) -> (Unified Symbol, Bool)
+getPossibleFunction (k, (_,_,attrs)) =  (k, any (\x -> x) $ fmap isFunction $ getAttributes attrs)
+
+-- Return the list of symbols that are actually functions.
+getFunctions :: [(Unified Symbol, ([UnifiedSort], UnifiedSort, Attributes))]
+     -> [Unified Symbol]
+getFunctions ctors = fmap (\(sym, _) -> sym) $ filter (\(_, isFun) -> isFun) $ fmap getPossibleFunction ctors
+
+driver :: FilePath -> IO ()
+driver fileName = do
+  contents  <- readFile fileName
+  let result = fromKore fileName contents
+  case result of
+    Left _         -> putStrLn "ERROR"
+    Right definition -> putStrLn $ show $ getFunctions $ assocs $ symCs $ parseSymbols definition
