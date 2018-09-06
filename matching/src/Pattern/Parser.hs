@@ -149,14 +149,16 @@ getPossibleFunction :: (Unified Symbol, ([UnifiedSort], UnifiedSort, Attributes)
 getPossibleFunction (k, (_,_,attrs)) =  (k, any (\x -> x) $ fmap isFunction $ getAttributes attrs)
 
 -- Return the list of symbols that are actually functions.
-getFunctions :: [(Unified Symbol, ([UnifiedSort], UnifiedSort, Attributes))]
-     -> [Unified Symbol]
-getFunctions ctors = fmap (\(sym, _) -> sym) $ filter (\(_, isFun) -> isFun) $ fmap getPossibleFunction ctors
+getFunctions :: Map (Unified Symbol) ([UnifiedSort], UnifiedSort, Attributes)
+    -> [Unified Symbol]
 
+getFunctions = (fmap (\(sym, _) -> sym)) . (filter (\(_, isFun) -> isFun)) . (fmap getPossibleFunction) . assocs
+
+-- useful for testing definitions in ghci that are loaded from a file.
 driver :: FilePath -> IO ()
 driver fileName = do
   contents  <- readFile fileName
   let result = fromKore fileName contents
   case result of
     Left _         -> putStrLn "ERROR"
-    Right definition -> putStrLn $ show $ getFunctions $ assocs $ symCs $ parseSymbols definition
+    Right definition -> putStrLn $ show $ getFunctions $ symCs $ parseSymbols definition
