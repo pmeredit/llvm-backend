@@ -6,6 +6,8 @@
 
 #include "runtime/header.h"
 
+#include <iostream>
+
 using namespace kllvm;
 using namespace kllvm::parser;
 
@@ -26,6 +28,7 @@ static void *allocatePatternAsConfiguration(const KOREPattern *Pattern) {
   symbol->print(Out);
   uint32_t tag = getTagForSymbolName(Out.str().c_str());
 
+  std::cout << "TAG " << tag << ": " << Out.str().c_str() << std::endl;
   if (isSymbolAFunction(tag)) {
     std::vector<void *> arguments;
     for (const auto child : constructor->getArguments()) {
@@ -75,5 +78,7 @@ block *parseConfiguration(const char *filename) {
   //InitialConfiguration->print(std::cout);
 
   // Allocate the llvm KORE datastructures for the configuration
-  return (block *) allocatePatternAsConfiguration(InitialConfiguration);
+  auto ret = (block *) allocatePatternAsConfiguration(InitialConfiguration);
+  std::cout << "DONE CONFIG" << std::endl;
+  return ret;
 }
